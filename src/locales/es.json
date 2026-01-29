@@ -21,5 +21,10 @@
     "text_copied": "Texto copiado",
     "image_copied": "Imagen copiada",
     "show_more": "Mostrar más",
-    "show_less": "Mostrar menos"
+    "show_less": "Mostrar menos",
+    "retention": "Autoborrado de Clips",
+    "days": "días",
+    "about_klip": "Acerca de Klip",
+    "about_klip_text": "App made by Miguel Cuevas",
+    "about_klip_email": "cuevasfm@gmail.com"
 }

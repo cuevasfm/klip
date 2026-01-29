@@ -39,6 +39,12 @@ fn normalize_text(text: &str) -> String {
     normalized.to_lowercase()
 }
 
+// ... (imports)
+
+// ... (existing structs)
+
+// ... (DbState, DB_FILENAME)
+
 async fn init_db(app_handle: &AppHandle) -> Result<Pool<Sqlite>, String> {
     let app_dir = app_handle.path().app_data_dir().unwrap_or(std::path::PathBuf::from("."));
     std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
@@ -62,6 +68,17 @@ async fn init_db(app_handle: &AppHandle) -> Result<Pool<Sqlite>, String> {
             content TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             is_favorite BOOLEAN DEFAULT 0
+        )"
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Create Settings Table
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         )"
     )
     .execute(&pool)
@@ -96,8 +113,30 @@ async fn init_db(app_handle: &AppHandle) -> Result<Pool<Sqlite>, String> {
         std::fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
     }
 
-    // Retention policy
-    let retention_date = Utc::now() - chrono::Duration::days(90);
+    // Retention policy (Dynamic)
+    // Get setting, default to 90
+    let retention_days: i64 = sqlx::query_as::<_, (String,)>("SELECT value FROM settings WHERE key = 'retention_days'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None)
+        .map(|(v,)| v.parse().unwrap_or(90))
+        .unwrap_or(90);
+
+    let retention_date = Utc::now() - chrono::Duration::days(retention_days);
+    
+    // Handle image deletion for expired clips
+    let expired_images: Vec<(Option<String>,)> = sqlx::query_as("SELECT image_path FROM clips WHERE is_favorite = 0 AND created_at < ? AND clip_type = 'image'")
+        .bind(retention_date.to_rfc3339())
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+    
+    for (path,) in expired_images {
+        if let Some(p) = path {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
     sqlx::query("DELETE FROM clips WHERE is_favorite = 0 AND created_at < ?")
         .bind(retention_date.to_rfc3339())
         .execute(&pool)
@@ -108,7 +147,33 @@ async fn init_db(app_handle: &AppHandle) -> Result<Pool<Sqlite>, String> {
 }
 
 #[tauri::command]
+async fn get_setting(state: tauri::State<'_, DbState>, key: String) -> Result<Option<String>, String> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    Ok(row.map(|(v,)| v))
+}
+
+#[tauri::command]
+async fn set_setting(state: tauri::State<'_, DbState>, key: String, value: String) -> Result<(), String> {
+    sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)")
+        .bind(key)
+        .bind(value)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ... (rest of commands: get_clips, etc.)
+// Don't forget to add get_setting/set_setting to invoke_handler!
+
+#[tauri::command]
 async fn get_clips(state: tauri::State<'_, DbState>, search_text: Option<String>, date_filter: Option<String>) -> Result<Vec<Clip>, String> {
+// ...
     let mut query = "SELECT id, content, created_at, is_favorite, clip_type, image_path FROM clips WHERE 1=1".to_string();
     let mut args = Vec::new();
 
@@ -360,6 +425,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let _ = app.get_webview_window("main").expect("no main window").show();
+            let _ = app.get_webview_window("main").expect("no main window").set_focus();
+        }))
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
@@ -411,7 +480,7 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_clips, get_dates_with_clips, add_clip, copy_to_clipboard, update_clip_content, delete_clip, copy_image_to_clipboard])
+        .invoke_handler(tauri::generate_handler![get_clips, get_dates_with_clips, add_clip, copy_to_clipboard, update_clip_content, delete_clip, copy_image_to_clipboard, get_setting, set_setting])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

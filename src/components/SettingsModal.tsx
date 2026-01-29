@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Moon, Sun, Globe } from 'lucide-react';
+import { invoke } from "@tauri-apps/api/core";
 import clsx from 'clsx';
 
 interface SettingsModalProps {
@@ -12,11 +13,28 @@ interface SettingsModalProps {
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, theme, setTheme }) => {
     const { t, i18n } = useTranslation();
+    const [retentionDays, setRetentionDays] = useState<string>("90");
+
+    useEffect(() => {
+        if (isOpen) {
+            invoke('get_setting', { key: 'retention_days' })
+                .then((val: unknown) => {
+                    setRetentionDays((val as string) || "90");
+                })
+                .catch(console.error);
+        }
+    }, [isOpen]);
 
     if (!isOpen) return null;
 
     const changeLanguage = (lng: string) => {
         i18n.changeLanguage(lng);
+    };
+
+    const handleRetentionChange = (days: string) => {
+        setRetentionDays(days);
+        invoke('set_setting', { key: 'retention_days', value: days })
+            .catch(console.error);
     };
 
     return (
@@ -70,6 +88,27 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, theme, s
                     </div>
                 </div>
 
+                {/* Retention Section */}
+                <div className="mb-6">
+                    <label className="block text-sm font-medium mb-3 opacity-80">{t('retention')}</label>
+                    <div className="grid grid-cols-3 gap-2">
+                        {["30", "60", "90"].map((days) => (
+                            <button
+                                key={days}
+                                onClick={() => handleRetentionChange(days)}
+                                className={clsx(
+                                    "flex items-center justify-center py-2 rounded-md text-sm transition-all border",
+                                    retentionDays === days
+                                        ? (theme === 'dark' ? "bg-[#37373d] border-blue-500 text-white" : "bg-blue-50 border-blue-500 text-blue-900")
+                                        : (theme === 'dark' ? "bg-[#2d2d2d] border-transparent hover:bg-[#37373d]" : "bg-gray-50 border-transparent hover:bg-gray-100")
+                                )}
+                            >
+                                {days} {t('days')}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 {/* Language Section */}
                 <div className="mb-6">
                     <label className="block text-sm font-medium mb-3 opacity-80">{t('language')}</label>
@@ -103,10 +142,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, theme, s
 
                 {/* About Section */}
                 <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
-                    <h3 className="text-sm font-medium mb-2 opacity-80">About Klip</h3>
+                    <h3 className="text-sm font-medium mb-2 opacity-80">{t('about_klip')}</h3>
                     <div className="text-sm opacity-60 space-y-1">
-                        <p>App made by Miguel Cuevas</p>
-                        <p>miguel@example.com</p>
+                        <p>{t('about_klip_text')}</p>
+                        <p>{t('about_klip_email')}</p>
                     </div>
                 </div>
 
